@@ -1,0 +1,12 @@
+#+TITLE: denote-wiki
+
+* Description
+A common lisp program to make/serve an html browseable wiki for your [[https://protesilaos.com/emacs/denote][denote]] notes.
+
+* Dependencies
++ an abundance of plain text notes with denote filenames
++ GNU Emacs + denote if you want to make more notes
++ sbcl, quicklisp, asdf
++ [[https://www.sbcl.org][SBCL]]
++ [[https://asdf.common-lisp.dev/][ASDF]] (included in most Common Lisp implementations)
++ [[https://www.quicklisp.org/beta/][Quicklisp]]
