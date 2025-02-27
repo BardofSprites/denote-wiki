@@ -1,8 +1,9 @@
-(ql:quickload "cl-ppcre")
-(ql:quickload "hunchentoot")
-(ql:quickload "uiop")
+(ql:quickload '(:ningle :clack :alexandria :cl-who :cl-ppcre))
 
-;;;; Note logic
+;; ----------
+;; Note logic
+;; ----------
+
 (defparameter *notes-dir* "~/Notes/denote/")
 
 (defun get-org-files (directory)
@@ -52,73 +53,91 @@
     ))
 
 (defun parse-note-filename (filepath)
-  "Parse denote filename into list (YYYYMMDD HHMMSS title '(keywords))"
+  "Parse denote filename into list (YYYY-MM-DD HH:MM:SS title '(keywords))"
   (cl-ppcre:register-groups-bind (date time title keywords)
       ("(\\d{8})T(\\d{6})--(.*?)__([^.]*)\\.org"
        (file-namestring filepath))
-    (list date time title (cl-ppcre:split "_" keywords))))
+    (let* ((formatted-date (concatenate 'string
+                                        (subseq date 0 4) "-"  ; YYYY
+                                        (subseq date 4 6) "-"  ; MM
+                                        (subseq date 6 8)))    ; DD
+           (formatted-time (concatenate 'string
+                                        (subseq time 0 2) ":"  ; HH
+                                        (subseq time 2 4) ":"  ; MM
+                                        (subseq time 4 6)))    ; SS
+           (keywords-list (cl-ppcre:split "_" keywords)))
+      (list formatted-date formatted-time title keywords-list))))
 
-(defun format-date (date-str)
-  (let* ((date (parse-integer date-str))
-         (year (truncate date 10000))
-         (month (truncate (mod date 10000) 100))
-         (day (mod date 100)))
-    (format nil "~4,'0d-~2,'0d-~2,'0d" year month day)))
+(defun find-note-by-title (title)
+  "Search for an Org file matching TITLE in *notes-dir* and return its full path."
+  (loop for file in (get-org-files *notes-dir*)
+        for parsed = (parse-note-filename file)
+        when (string= (third parsed) title)
+          return (namestring file)))
 
-(defun format-keywords (keywords-list)
-  (format nil "[~{~a~^, ~}]" keywords-list))
+;; ----------
+;; Conversion
+;; ----------
 
-(defun format-time (time-str)
-  (let* ((time (parse-integer time-str))
-         (hour (truncate time 10000))
-         (minute (truncate (mod time 10000) 100))
-         (second (mod time 100)))
-    (format nil "~2,'0d:~2,'0d:~2,'0d" hour minute second)))
+(defun pandoc (input-path from to)
+  (let* ((command-str
+           (format nil "pandoc ~a -f ~a -t ~a" input-path from to)))
+    (uiop:run-program command-str :output :string)))
 
-;;;; Server
+(defun serve-note (title)
+  "Serve the Org note as HTML based on the title."
+  (let ((note-path (find-note-by-title title)))
+    (if note-path
+        (pandoc note-path "org" "html")
+        "<h1>Note not found</h1>")))
 
-(defvar *server* nil)
+;; ----------
+;; Hosting html
+;; ----------
+(defvar *app* (make-instance 'ningle:app))
 
-(defun start-server ()
-  "Start the local HTTP server."
-  (setq *server* (hunchentoot:start (make-instance 'hunchentoot:easy-acceptor :port 8079))))
+(setf (ningle:route *app* "/:title")
+      #'(lambda (params)
+          (serve-note (cdr (assoc :title params)))))
 
-(defun stop-server ()
-  "Stop the local HTTP server."
-  (when *server*
-    (hunchentoot:stop *server*)))
+(setf (ningle:route *app* "/")
+      (lambda (req)
+        (let ((org-files (get-org-files *notes-dir*)))  ;; Ensure *notes-dir* is correctly set
+          (cl-who:with-html-output-to-string (s)
+            (:html
+             (:head (:title "Welcome to denote-wiki!"))
+             (:body
+              (:h1 "Welcome to denote-wiki!")
+              (:h2 "Recent notes")
+              (:ul
+               (dolist (file org-files)
+                 (let ((parsed (parse-note-filename file)))
+                   (when parsed  ;; Ensure parsing was successful
+                     (destructuring-bind (date time title keywords) parsed
+                       (cl-who:htm
+                        (:li
+                         (cl-who:str date) " " (cl-who:str time)
+                         " "
+                         (cl-who:htm (:strong (cl-who:str (substitute #\Space #\- (string-capitalize title)))))   ;; Display title in bold
+                         " - Keywords: "
+                         (cl-who:htm (:em (cl-who:str (format nil "~{~a~^, ~}" keywords)))))))))))))))))
 
-(defun render-file-list (files)
-  "Generate HTML links for a list of files, stripping directory paths."
-  (format nil "<ul>~{<li><a href='/note/~a'>~a</a></li>~}</ul>"
-          (mapcar #'pathname-name files) (mapcar #'pathname-name files)))
 
-(defun browse-notes-page ()
-  "Return an HTML page listing all notes."
-  (let ((files (get-org-files *notes-dir*)))
-    (with-output-to-string (s)
-      (format s "<html><head><title>Notes</title></head>
-                 <body><h1>Notes</h1>~a</body></html>"
-              (render-file-list files)))))
+(clack:clackup *app*)
 
-(defun note-page (filename)
-  "Return an HTML page displaying a specific note."
-  (let ((file-path (merge-pathnames filename *notes-dir*)))
-    (if (probe-file file-path)
-        (with-open-file (stream file-path)
-          (when stream
-            (let ((content (make-string (file-length stream))))
-              (read-sequence content stream)
-              (format nil "<html><body><h1>Note: ~a</h1><pre>~a</pre></body></html>"
-                      filename content))))
-        "<html><body><h1>404 - Note not found</h1></body></html>")))
-
-(hunchentoot:define-easy-handler (browse-notes :uri "/") ()
-  (browse-notes-page))
-
-(hunchentoot:define-easy-handler (view-note :uri "/note/:filename") (filename)
-  (note-page filename))
-
-;;;; Main
-(defun -main ()
-  (start-server))
+(defun parse-note-filename (filepath)
+  "Parse denote filename into list (YYYY-MM-DD HH:MM:SS title '(keywords))"
+  (cl-ppcre:register-groups-bind (date time title keywords)
+      ("(\\d{8})T(\\d{6})--(.*?)__([^.]*)\\.org"
+       (file-namestring filepath))
+    (let* ((formatted-date (concatenate 'string
+                                        (subseq date 0 4) "-"  ; YYYY
+                                        (subseq date 4 6) "-"  ; MM
+                                        (subseq date 6 8)))    ; DD
+           (formatted-time (concatenate 'string
+                                        (subseq time 0 2) ":"  ; HH
+                                        (subseq time 2 4) ":"  ; MM
+                                        (subseq time 4 6)))    ; SS
+           (formatted-title (substitute #\Space #\- title))   ;; Replace '-' with ' '
+           (keywords-list (cl-ppcre:split "_" keywords)))
+      (list formatted-date formatted-time formatted-title keywords-list))))
