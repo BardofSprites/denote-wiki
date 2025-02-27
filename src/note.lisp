@@ -1,10 +1,18 @@
-(ql:quickload '(:ningle :clack :alexandria :cl-who :cl-ppcre))
+(defpackage :denote-wiki.note
+  (:use :cl :cl-ppcre :uiop)
+  (:export
+   :*notes-dir*
+   :get-org-files
+   :find-note-by-title
+   :parse-note-filename
+   :unique-keywords
+   :count-unique-keywords
+   :find-keywords
+   :pandoc))
 
-;; ----------
-;; Note logic
-;; ----------
+(in-package :denote-wiki.note)
 
-(defparameter *notes-dir* "~/Notes/denote/")
+(defparameter *notes-dir* "~/Notes/denote/" "Directory containing note files")
 
 (defun get-org-files (directory)
   (remove-if-not (lambda (it)
@@ -75,69 +83,8 @@
         when (string= (third parsed) title)
           return (namestring file)))
 
-;; ----------
-;; Conversion
-;; ----------
-
 (defun pandoc (input-path from to)
+  "Convert the org note to html using pandoc."
   (let* ((command-str
            (format nil "pandoc ~a -f ~a -t ~a" input-path from to)))
     (uiop:run-program command-str :output :string)))
-
-(defun serve-note (title)
-  "Serve the Org note as HTML based on the title."
-  (let ((note-path (find-note-by-title title)))
-    (if note-path
-        (pandoc note-path "org" "html")
-        "<h1>Note not found</h1>")))
-
-;; ----------
-;; Hosting html
-;; ----------
-(defvar *app* (make-instance 'ningle:app))
-
-(setf (ningle:route *app* "/:title")
-      #'(lambda (params)
-          (serve-note (cdr (assoc :title params)))))
-
-(setf (ningle:route *app* "/")
-      (lambda (req)
-        (let ((org-files (get-org-files *notes-dir*)))  ;; Ensure *notes-dir* is correctly set
-          (cl-who:with-html-output-to-string (s)
-            (:html
-             (:head (:title "Welcome to denote-wiki!"))
-             (:body
-              (:h1 "Welcome to denote-wiki!")
-              (:h2 "Recent notes")
-              (:ul
-               (dolist (file org-files)
-                 (let ((parsed (parse-note-filename file)))
-                   (when parsed  ;; Ensure parsing was successful
-                     (destructuring-bind (date time title keywords) parsed
-                       (cl-who:htm
-                        (:li
-                         (cl-who:str date) " " (cl-who:str time)
-                         " "
-                         (cl-who:htm (:strong (cl-who:str (substitute #\Space #\- (string-capitalize title)))))   ;; Display title in bold
-                         " - Keywords: "
-                         (cl-who:htm (:em (cl-who:str (format nil "~{~a~^, ~}" keywords)))))))))))))))))
-
-
-(clack:clackup *app*)
-
-(defun parse-note-filename (filepath)
-  "Parse denote filename into list (YYYY-MM-DD HH:MM:SS title '(keywords))"
-  (cl-ppcre:register-groups-bind (date time title keywords)
-      ("(\\d{8})T(\\d{6})--(.*?)__([^.]*)\\.org"
-       (file-namestring filepath))
-    (let* ((formatted-date (concatenate 'string
-                                        (subseq date 0 4) "-"  ; YYYY
-                                        (subseq date 4 6) "-"  ; MM
-                                        (subseq date 6 8)))    ; DD
-           (formatted-time (concatenate 'string
-                                        (subseq time 0 2) ":"  ; HH
-                                        (subseq time 2 4) ":"  ; MM
-                                        (subseq time 4 6)))    ; SS
-           (formatted-title (substitute #\Space #\- title))   ;; Replace '-' with ' '
-           (keywords-list (cl-ppcre:split "_" keywords)))
-      (list formatted-date formatted-time formatted-title keywords-list))))
