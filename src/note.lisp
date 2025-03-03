@@ -16,7 +16,8 @@
 
 (defun get-org-files (directory)
   (remove-if-not (lambda (it)
-                   (search ".org" (namestring it)))
+                   (and (search ".org" (file-namestring it))
+                        (digit-char-p (char (file-namestring it) 0))))
                  (uiop:directory-files directory)))
 
 (defun extract-keywords (filename)
@@ -28,9 +29,8 @@
                                 (position #\. filename :from-end t))))
         (mapcar #'intern (ppcre:split #\_ tag-string))))))
 
-(defun find-keywords (directory keywords)
+(defun find-keywords (keywords)
   "@params:
-   directory - notes directory
    keywords - list of keywords to search
    @returns: list of filepaths that containe keywords in directory"
   (let ((keyword-symbols (mapcar #'intern keywords))) ; Convert keywords to symbols
@@ -39,7 +39,7 @@
                        (and tags (every (lambda (kw)
                                           (member kw tags))
                                         keyword-symbols))))
-                   (get-org-files directory))))
+                   (get-org-files *notes-dir*))))
 
 
 (defun unique-keywords (directory)
@@ -86,5 +86,5 @@
 (defun pandoc (input-path from to)
   "Convert the org note to html using pandoc."
   (let* ((command-str
-           (format nil "pandoc ~a -f ~a -t ~a" input-path from to)))
+           (format nil "pandoc --mathjax ~a -f ~a -t ~a" input-path from to)))
     (uiop:run-program command-str :output :string)))

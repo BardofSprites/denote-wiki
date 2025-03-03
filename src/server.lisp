@@ -6,9 +6,12 @@
                 :pandoc
                 :get-org-files
                 :parse-note-filename)
-  (:export :start-server))
+  (:export :start-server
+           :stop-server))
 
 (in-package :denote-wiki.server)
+
+(defvar *app* (make-instance 'ningle:app))
 
 (defun serve-note (title)
   "Serve the Org note as HTML based on the title."
@@ -17,34 +20,40 @@
         (pandoc note-path "org" "html")
         "<h1>Note not found</h1>")))
 
-(defvar *app* (make-instance 'ningle:app))
-
 (setf (ningle:route *app* "/:title")
       #'(lambda (params)
           (serve-note (cdr (assoc :title params)))))
 
 (setf (ningle:route *app* "/")
       (lambda (req)
-        (let ((org-files (get-org-files *notes-dir*)))  ;; Ensure *notes-dir* is correctly set
+        (let* ((org-files (get-org-files *notes-dir*))
+               (recent-files (reverse
+                              (subseq org-files (max 0 (- (length org-files) 10))))))
+          ;; Debugging: print the number of org-files and their names
           (cl-who:with-html-output-to-string (s)
             (:html
              (:head (:title "Welcome to denote-wiki!"))
              (:body
               (:h1 "Welcome to denote-wiki!")
-              (:h2 "Recent notes")
+              (:h2 "Recent Notes")
               (:ul
-               (dolist (file org-files)
+               (dolist (file recent-files)
                  (let ((parsed (parse-note-filename file)))
-                   (when parsed  ;; Ensure parsing was successful
+                   (when parsed ;; Ensure parsing was successful
                      (destructuring-bind (date time title keywords) parsed
                        (cl-who:htm
                         (:li
                          (cl-who:str date) " " (cl-who:str time)
                          " "
-                         (cl-who:htm (:strong (cl-who:str (substitute #\Space #\- (string-capitalize title)))))   ;; Display title in bold
+                         (cl-who:htm (:strong
+                                      (cl-who:str
+                                       (substitute #\Space #\-
+                                                   (string-capitalize title)))))
                          " - Keywords: "
-                         (cl-who:htm (:em (cl-who:str (format nil "~{~a~^, ~}" keywords)))))))))))))))))
-
+                         (cl-who:htm (:em (cl-who:str (format nil "~{~a~^, ~}" keywords)))))))))))
+              (:h2 "Search By Keyword")
+              ))))))
 
 (defun start-server ()
-  (clack:clackup *app*))
+  (clack:clackup *app*
+                 :server :woo))
